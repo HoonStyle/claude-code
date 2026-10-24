@@ -111,7 +111,9 @@ loaded plugin hooks it, so where this plugin is seated every tool call now
 runs the `tool.check` chain, where before only a session with such a plugin
 did. So has hooking `ui.log`, `env.get` and `env.set`: each such call of any
 plugin's now runs a chain, and an `env.set` from outside the organization's tiers waits on
-the policy read.
+the policy read. Where the copy built into Claude Code is the only plugin that
+hooks `env.get` or `command.describe`, the engine runs no chain for that event:
+this plugin would only pass it on, so the answer is the engine's own.
 
 ## What it calls on `$`
 
@@ -119,6 +121,18 @@ the policy read.
 person reads when something held over a plugin of theirs. It continues to
 the `append` tier with `next.to`, which only a plugin in a managed tier may
 do.
+
+An organization's plugin seated above it in `prepend` can reopen an event
+with `next.to(e, "user")`: this mod is then a peer below that hook, and is
+skipped. One seated below it reopens nothing, its floor at `append` winning.
+
+A reopen is as wide as the opener's hooks that spell `next.to(e, "user")`, by
+pattern: the host reads their matcher and door over the dispatch as raised. A
+condition inside a hook is not checked, so a mod that shares the hooks worker
+can cause the reopen there whether or not the hook took the branch. Where a
+member above rewrites the argument into such a matcher, the call fails in the
+opener's hook, and the hop and its rewrite go on with the guard in place. A
+RegExp is not read past 65,536 characters, and the reopen is refused there.
 
 ## Deny rules hold
 
