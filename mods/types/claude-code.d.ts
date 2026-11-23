@@ -2894,14 +2894,15 @@ declare module 'claude-code' {
           root: string;
       };
       /**
-       * Display: a line under an open dialog, a redraw or a repaint, a log line,
+       * Display: a line with an open dialog, a redraw or a repaint, a log line,
        * panes the surface places, a window or ring, a surface's clipboard.
        */
       ui: {
           /**
-           * Shows `text` as one line under the dialog open for `tool_use_id`, or
+           * Shows `text` as one line with the dialog open for `tool_use_id`, or
            * removes the line when `text` is undefined.
            *
+           * The line is above the dialog in fullscreen and under it elsewhere.
            * Core removes the line when the call resolves. A call that is not open
            * is refused, as is another plugin's `$.tool.call` run.
            *
@@ -7017,7 +7018,7 @@ declare module 'claude-code' {
    */
   export type HookFor<P extends Pattern> = P extends '*' ? AnyEventHook : P extends EventName ? Events[P] : GlobHook<P>;
 
-  type HookInput = PreToolUseHookInput | PostToolUseHookInput | PostToolUseFailureHookInput | PostToolBatchHookInput | PermissionDeniedHookInput | NotificationHookInput | UserPromptSubmitHookInput | UserPromptExpansionHookInput | SessionStartHookInput | SessionEndHookInput | StopHookInput | StopFailureHookInput | SubagentStartHookInput | SubagentStopHookInput | PreCompactHookInput | PostCompactHookInput | PreModelSwitchHookInput | PostModelSwitchHookInput | PermissionRequestHookInput | SetupHookInput | TeammateIdleHookInput | TaskCreatedHookInput | TaskCompletedHookInput | ElicitationHookInput | ElicitationResultHookInput | ConfigChangeHookInput | InstructionsLoadedHookInput | WorktreeCreateHookInput | WorktreeRemoveHookInput | CwdChangedHookInput | FileChangedHookInput | DirectoryAddedHookInput | MessageDisplayHookInput;
+  type HookInput = PreToolUseHookInput | PostToolUseHookInput | PostToolUseFailureHookInput | PostToolBatchHookInput | PermissionDeniedHookInput | NotificationHookInput | UserPromptSubmitHookInput | UserPromptExpansionHookInput | SessionStartHookInput | SessionEndHookInput | StopHookInput | StopFailureHookInput | SubagentStartHookInput | SubagentStopHookInput | PreCompactHookInput | PostCompactHookInput | PreModelSwitchHookInput | PostModelSwitchHookInput | PermissionRequestHookInput | SetupHookInput | TeammateIdleHookInput | TaskCreatedHookInput | TaskCompletedHookInput | ElicitationHookInput | ElicitationResultHookInput | ConfigChangeHookInput | InstructionsLoadedHookInput | WorktreeCreateHookInput | WorktreeRemoveHookInput | CwdChangedHookInput | FileChangedHookInput | DirectoryAddedHookInput | MessageDisplayHookInput | PreSkillShellCommandHookInput;
 
   /**
    * The hook event `E` takes: an async generator over its chunks for a
@@ -10962,6 +10963,33 @@ declare module 'claude-code' {
        * configured: priced at the managed modelPricing setting; catalog: list price; default: to_model unknown, the default tier was assumed
        */
       pricing: 'configured' | 'catalog' | 'default';
+  };
+
+  type PreSkillShellCommandHookInput = BaseHookInput & {
+      hook_event_name: 'PreSkillShellCommand';
+      /**
+       * The shell tool that runs the command: Bash or PowerShell
+       */
+      tool_name: string;
+      tool_input: {
+          /**
+           * The command as it would run, with arguments filled in
+           */
+          command: string;
+      };
+      /**
+       * Identifies this command. It names no tool call in the transcript.
+       */
+      tool_use_id: string;
+      /**
+       * The skill or command whose text holds the shell command
+       */
+      command_name: string;
+      command_source?: string;
+      /**
+       * Who started the load. user: typed, or sent by an SDK host. claude: the Skill tool, or a turn that Claude scheduled. other: anything else, such as a subagent's preload or a channel message, or not known.
+       */
+      invoked_by: 'user' | 'claude' | 'other';
   };
 
   /**
