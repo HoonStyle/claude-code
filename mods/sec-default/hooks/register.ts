@@ -17,17 +17,21 @@ import { managedModsOnlyRefusal } from './managed-mods-only-refusal'
 import { isOrganizationsHookCall } from './organizations-hook-call'
 import { pastUsers } from './past-users'
 import { pinnedVariableRefusal } from './pinned-variable-refusal'
-import Policy, { isCloudVariableInUse } from './policy'
+import Policy, { pinnedRefusalOf } from './policy'
 import { isSkillRow } from './skill-row'
 import {
   registerRefusalOf,
   TOOL_REGISTER_REFUSAL,
+  withoutRefusedTools,
 } from './tool-register-refusal'
 import { usesNothing } from './uses-nothing'
 import { withoutModules } from './without-modules'
 
 const TOOL_LIST_REFUSAL = 'sec-default could not read the tool list'
 const PERSONS_PROMPTS = ['composer', 'bridge', 'sdk', 'slack-ping']
+
+const unsetIn = (env: Readonly<Record<string, string | null>> = {}) =>
+  Object.keys(env).filter(name => env[name] === null)
 
 /**
  * The built-in's hooks, seated outermost: each keeps one control an
@@ -51,6 +55,10 @@ export function register(on: On) {
   const pastManagedOnly = new Set<string>()
   const memory = EarlyRun.createCallMemory()
   const first: FirstFolder = {}
+  // What the engine's newest raise of tool.list lost, for a loop whose pool stands.
+  const withheld = { names: new Set<string>(), begun: 0, judged: 0 }
+  // Each raise's place among the engine's, which its `.catch` reads too.
+  const places = new WeakMap<object, number>()
 
   on('classic.*', ($, e, next) => next.to(e, 'append'))
 
@@ -149,9 +157,19 @@ export function register(on: On) {
         : undefined
 
     return refusal === undefined ? next(e) : { deny: refusal }
+  }).catch(($, e, next) => {
+    if (next.called) {
+      return next(e)
+    }
+
+    return next.origin.tier === 'user'
+      ? { deny: TOOL_REGISTER_REFUSAL }
+      : next.to(e, 'append')
   })
 
   on('tool.list', async ($, e, next) => {
+    const place = next.origin.tier === 'core' ? (withheld.begun += 1) : -1
+    places.set(e, place)
     // The engine asks because settings changed, among other causes, and asks
     // only then: a memo younger than that change would answer it for good.
     const policy =
@@ -159,7 +177,8 @@ export function register(on: On) {
         ? $.settings.read(Policy.SOURCE)
         : readPolicy(() => $.settings.read(Policy.SOURCE))
     const managed = await policy.catch(() => undefined)
-    const listed = await next.to(e, 'append')
+    const beneath = await next.to(e, 'append')
+    const listed = withoutRefusedTools(beneath, withheld, place, managed)
 
     // Here and not in `.catch`, whose `next` replays this hook's last call: the
     // organization's listing is in hand, and whatever fails below costs it nothing.
@@ -182,13 +201,21 @@ export function register(on: On) {
   }).catch(async ($, e, next) =>
     Policy.orgRemovalsApplied(
       await $.settings.read(Policy.SOURCE).catch(() => undefined),
-      await next.to(e, 'append').catch(() => ({ deny: TOOL_LIST_REFUSAL })),
+      withoutRefusedTools(
+        await next.to(e, 'append').catch(() => ({ deny: TOOL_LIST_REFUSAL })),
+        withheld,
+        next.origin.tier === 'core' ? (places.get(e) ?? withheld.begun) : -1,
+      ),
     ),
   )
 
   // The rows from here to process.spawn read as absent where this is the built-in copy and no person's mod took a seat.
-  // None has a .catch: a failure before a match is no ground to refuse, and refusalOf catches its own.
+  // None has a .catch: a failure before a match is no ground to refuse, and each refusal's helper catches its own.
   on('tool.call', async ($, e, next) => {
+    if (withheld.names.has(e.tool)) {
+      return { deny: TOOL_REGISTER_REFUSAL }
+    }
+
     const call = EarlyRun.callOf(e)
     const id = e.tool_use_id
 
@@ -258,7 +285,7 @@ export function register(on: On) {
       $,
       readPolicy,
       await writeRepeats($, remembered, e.path),
-      await isSettingsFile($, e.path, first),
+      await isSettingsFile($, e.path, first, e.text === ''),
       { path: e.path, first, remembered },
     )
 
@@ -272,10 +299,16 @@ export function register(on: On) {
       : next(e),
   )
 
+  on('fs.list', ($, e, next) =>
+    next.origin.tier === 'prepend' && next.origin.plugin === $.plugin.name
+      ? next.to(e, 'append')
+      : next(e),
+  )
+
   on('process.run', async ($, e, next) => {
     const deny =
       next.origin.tier === 'user'
-        ? await refusalOf(
+        ? ((await refusalOf(
             $,
             readPolicy,
             EarlyRun.processRepeats(
@@ -288,7 +321,7 @@ export function register(on: On) {
               [...e.argv, e.init?.stdin ?? ''],
               memory.served(),
             ),
-          )
+          )) ?? (await pinnedRefusalOf($, readPolicy, unsetIn(e.init?.env))))
         : undefined
 
     return deny === undefined ? next(e) : { deny }
@@ -297,7 +330,7 @@ export function register(on: On) {
   on('process.spawn', async function* ($, e, next) {
     const deny =
       next.origin.tier === 'user'
-        ? await refusalOf(
+        ? ((await refusalOf(
             $,
             readPolicy,
             EarlyRun.processRepeats(
@@ -310,7 +343,7 @@ export function register(on: On) {
               [...e.argv, e.input ?? ''],
               memory.served(),
             ),
-          )
+          )) ?? (await pinnedRefusalOf($, readPolicy, unsetIn(e.env))))
         : undefined
 
     return deny === undefined ? yield* next(e) : { deny }
@@ -478,13 +511,9 @@ export function register(on: On) {
       return next.to(e, 'append')
     }
 
-    const isPinned =
-      (await Policy.decidedByPolicy(
-        readPolicy(() => $.settings.read(Policy.SOURCE)),
-        policy => Policy.isPinnedVariable(policy, e.name),
-      )) || (await isCloudVariableInUse($, e.name))
+    const refusal = await pinnedRefusalOf($, readPolicy, [e.name])
 
-    if (!isPinned) {
+    if (refusal === undefined) {
       // A home variable can get here, and the settings hold reads them.
       if (first.folder === undefined) {
         await configFolders($, first)
@@ -495,9 +524,7 @@ export function register(on: On) {
 
     const isTheirs = next.origin.tier === 'user'
 
-    return isTheirs
-      ? { deny: pinnedVariableRefusal(e.name) }
-      : next.to(e, 'append')
+    return isTheirs ? { deny: refusal } : next.to(e, 'append')
   }).catch(($, e, next) => {
     if (next.called) {
       return next(e)
@@ -559,7 +586,15 @@ export function register(on: On) {
       Policy.hasWorktreeHook,
     )
 
-    return isOrgs ? next.to(e, 'append') : next(e)
+    if (isOrgs || e.name !== undefined || (e.vcs ?? 'git') === 'git') {
+      return isOrgs ? next.to(e, 'append') : next(e)
+    }
+
+    const theirs = await next.to(e, 'append')
+    const last = next.trace.at(-1)
+    const cores = last?.tier === 'core' ? last.returned?.unknown : undefined
+
+    return cores !== undefined && cores === theirs.unknown ? next(e) : theirs
   }).catch(($, e, next) => (next.called ? next(e) : next.to(e, 'append')))
 
   on('vcs.release', async ($, e, next) => {
